@@ -12,6 +12,7 @@ FUNCTION decompress_dmt, cimage
    rlehb=0B  ; run-length encoding header byte
    ipos=0 ; where we are in the decompressed image
    cipos=0 ; where we are in the compressed image
+   clength=n_elements(cimage)
    
    IF n_elements(cimage) le 1 THEN $
       return, {image:image, bitimage:0, sync_ind:0, time_elap:0, time_sfm:0, particle_count:0, slice_count:0}
@@ -22,10 +23,10 @@ FUNCTION decompress_dmt, cimage
    WHILE total((cimage[cipos+1:cipos+8] eq sync)) ne 8 DO BEGIN
       cipos=cipos+1    
       ;Check for no syncs
-      IF cipos ge 4000 THEN return, {image:image, bitimage:0, sync_ind:0, time_elap:0, time_sfm:0, particle_count:0, slice_count:0}  
+      IF (cipos ge (clength-10)) THEN return, {image:image, bitimage:0, sync_ind:0, time_elap:0, time_sfm:0, particle_count:0, slice_count:0}  
    ENDWHILE
 
-   WHILE cipos lt 4095 and ipos lt 30000 DO BEGIN
+   WHILE (cipos lt n_elements(cimage)-1) and (ipos lt 30000) DO BEGIN
       zeroes=0 & ones=0 & dummy=0
       rlehb=cimage[cipos]
       cipos=cipos+1
@@ -45,7 +46,7 @@ FUNCTION decompress_dmt, cimage
       
       IF (zeroes eq 0) and (ones eq 0) and (dummy eq 0) THEN BEGIN    ;Just keeps the following bytes
          ;There is an infrequent error where cipos+count is too big
-         IF cipos+count le 4095 THEN image[ipos:ipos+count]=cimage[cipos:cipos+count]
+         IF cipos+count le (clength-1) THEN image[ipos:ipos+count]=cimage[cipos:cipos+count]
          ipos=ipos+count+1
          cipos=cipos+count+1
       ENDIF
@@ -71,6 +72,7 @@ FUNCTION decompress_dmt, cimage
    time=dblarr(500)     ;stores the timeline (in seconds) of each particle
    time_total=dblarr(500) ;the raw time (not elapsed in the buffer)
    particle_count=lonarr(500)  ;stores the particle counter of each particle
+   dof=bytarr(500)  ;stores the dof flag of each particle
    ;slice_count=intarr(500)  ; number of slices for each particle
    FOR i=0,slices-2 DO BEGIN   ; 'slices-2' to make sure we get a time slice with each sync slice
       ss=8*i & se=ss+7   ;slice start and end indices
@@ -79,6 +81,7 @@ FUNCTION decompress_dmt, cimage
          ;Decode the time slice, which comes right after the sync slice
          params=decode_header_slice(image[ss+8:se+8])
          particle_count[sync_count]=params.particle_count
+         dof[sync_count]=params.dof
          ;slice_count[sync_count]=params.slice_count
          
          ;Get the time for each particle, starting each buffer at 0 seconds         
@@ -90,6 +93,7 @@ FUNCTION decompress_dmt, cimage
    ENDFOR
    sync_ind=sync_ind[0:((sync_count>1)-1)] ; truncate the array to size (>1 since sync_count is sometimes 0 in bad buffers)
    particle_count=particle_count[0:sync_count>1-1]
+   dof=dof[0:sync_count>1-1]
    time=time[0:sync_count>1-1]
    time_total=time_total[0:sync_count>1-1]
    ;slice_count=slice_count[0:sync_count>1-1]
@@ -102,6 +106,6 @@ FUNCTION decompress_dmt, cimage
 
    ;This is for running on Windows PCs to avoid a crash
    IF !version.os_family eq 'Windows' THEN wait,0.01  
-   return, {image:image, bitimage:bitimage, sync_ind:sync_ind, time_elap:time, time_sfm:time_total, particle_count:particle_count, slice_count:slice_count}
+   return, {image:image, bitimage:bitimage, sync_ind:sync_ind, time_elap:time, time_sfm:time_total, particle_count:particle_count, slice_count:slice_count, dof:dof}
    
 END

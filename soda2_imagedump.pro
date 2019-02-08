@@ -1,5 +1,6 @@
 PRO soda2_imagedump, file, outdir=outdir, starttime=starttime, stoptime=stoptime, $
-              all=all, skip=skip, showdividers=showdividers, maxwidth=maxwidth, nofile=nofile
+              all=all, skip=skip, showdividers=showdividers, maxwidth=maxwidth, nofile=nofile,$
+              textwidgetid=textwidgetid
    ;Make a series of particle image png files from processed OAP data.
    ;Uses the SODA2 '.dat' files to find raw data locations and pointers.
    ;File: the processed SODA2 file for flight of interest
@@ -18,6 +19,7 @@ PRO soda2_imagedump, file, outdir=outdir, starttime=starttime, stoptime=stoptime
    IF n_elements(outdir) eq 0 THEN outdir=''
    IF n_elements(maxwidth) eq 0 THEN maxwidth=1024
    IF n_elements(nofile) eq 0 THEN nofile=0
+   IF n_elements(textwidgetid) eq 0 THEN textwidgetid=0
 
    IF nofile eq 1 THEN data=file ELSE restore, file
    op=data.op
@@ -58,6 +60,7 @@ PRO soda2_imagedump, file, outdir=outdir, starttime=starttime, stoptime=stoptime
      r[5]=50 & g[5]=50 & b[5]=150
    ENDIF
    
+   tvlct, rold, gold, bold, /get  ;Save current table
    tvlct,r,g,b
 
    ;General setup
@@ -84,7 +87,7 @@ PRO soda2_imagedump, file, outdir=outdir, starttime=starttime, stoptime=stoptime
       emptyimage=bytarr(op.numdiodes,700)
       FOR minute=0,numframes DO BEGIN
          imagetime=string(sfm2hms(data.time[i]),form='(i06)')
-         print,imagetime
+         IF textwidgetid ne 0 THEN widget_control,textwidgetid,set_value=imagetime,/append ELSE print,imagetime
          gotimage=0                          ;flag to write only if there are some images.
          device,/close
          device,set_resolution=[1600,imheight]
@@ -100,7 +103,7 @@ PRO soda2_imagedump, file, outdir=outdir, starttime=starttime, stoptime=stoptime
          FOR sec=0,59,rate DO BEGIN
             ind=where(data.ind eq i,buffcount)
             IF buffcount gt 0 THEN BEGIN
-               buff=soda2_bitimage(op.fn[data.currentfile[ind[0]]], data.pointer[ind[0]], pop, pmisc)
+               buff=soda2_bitimage(op.fn[data.currentfile[ind[0]]], data.pointer[ind[0]], pop, pmisc, divider=showdividers)
                finalimage=buff.bitimage
                ;Make sure there are at least 2 slices, if not just use empty image
                IF n_elements(finalimage) gt op.numdiodes THEN gotimage=1 ELSE finalimage = emptyimage
@@ -161,7 +164,7 @@ PRO soda2_imagedump, file, outdir=outdir, starttime=starttime, stoptime=stoptime
       remainder=0  ;flag for long buffers
       
       FOR i=framestart,framestop,skip DO BEGIN
-         buff=soda2_bitimage(op.fn[data.currentfile[i]], data.pointer[i], pop, pmisc)
+         buff=soda2_bitimage(op.fn[data.currentfile[i]], data.pointer[i], pop, pmisc, divider=showdividers)
          finalimage=buff.bitimage
          
          IF max(finalimage) gt 0 THEN BEGIN ;skip empty images
@@ -195,7 +198,7 @@ PRO soda2_imagedump, file, outdir=outdir, starttime=starttime, stoptime=stoptime
                device,/close
                device,set_resolution=[imwidth,imheight]
                panelcount=0
-               print,imagetime
+               IF textwidgetid ne 0 THEN widget_control,textwidgetid,set_value=imagetime,/append ELSE print,imagetime
             ENDIF
          ENDIF
       ENDFOR
@@ -205,6 +208,7 @@ PRO soda2_imagedump, file, outdir=outdir, starttime=starttime, stoptime=stoptime
    
    close,1
    device,/close
+   tvlct, rold, gold, bold  ;Restore original color table
    IF !version.os_family eq 'Windows' THEN set_plot,'win' ELSE set_plot,'x'
 END
 

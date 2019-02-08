@@ -27,7 +27,7 @@ PRO soda2_windowplot,topid,p1,pinfo,pop,pmisc,noset=noset
       0:BEGIN 
          spec=(*p1).spec2d[i,*,*]
          IF max(spec) gt 10 THEN plotarray=alog10(spec)>1 ELSE plotarray=spec
-         contour,plotarray,(*p1).midbins,armidbins,/cell,nlevels=20,position=[0.4,0.4,0.95,0.95],$
+         contour,plotarray,(*p1).midbins,armidbins,/cell,nlevels=40,position=[0.4,0.4,0.95,0.95],$
             /xl,/xs,/ys,xr=sizerange,yr=arrange,title='Image Counts'
          plot,(*p1).midbins,(*p1).conc1d[i,*],/xl,/yl,/xs,xr=sizerange,yr=[1e4,1e12],position=[0.4,0.07,0.95,0.35],/noerase,$
              xtit='Diameter (um)',ytit='Concentration (#/m!u4!n)',/nodata
@@ -71,6 +71,7 @@ PRO soda2_windowplot,topid,p1,pinfo,pop,pmisc,noset=noset
          buffermargin=10
          panelwidth=(*pop).numdiodes+buffermargin
          num2plot=!d.x_size/fix(panelwidth)
+         charsize=((*pop).numdiodes/50.0) < 1.4 > 0.8  ;Character size for the timestamp depends on buffer width
          
          ibuffer=0
          panelstart=(*pinfo).panelstart
@@ -86,7 +87,7 @@ PRO soda2_windowplot,topid,p1,pinfo,pop,pmisc,noset=noset
             b=soda2_bitimage(fn[(*p1).currentfile[ind[i]]], (*p1).pointer[ind[i]], pop, pmisc)
             IF b.rejectbuffer eq 0 THEN BEGIN
                tv,b.bitimage+1,panelwidth*ibuffer+buffermargin,20
-               xyouts,panelwidth*ibuffer+buffermargin,10,string(b.time,format='(f8.2)'),/device
+               xyouts,panelwidth*ibuffer+buffermargin,10,string(b.time,format='(f8.2)'),/device,charsize=charsize
             ENDIF
             ibuffer=ibuffer+1
          ENDFOR
@@ -192,9 +193,9 @@ PRO soda2_windowplot,topid,p1,pinfo,pop,pmisc,noset=noset
                 'Rejection Codes':BEGIN
                   total_count=float((*p1).count_rejected_total[a:b]+(*p1).count_accepted[a:b])>1
                   plot,x,(*p1).count_rejected[a:b,1]/total_count*100,ytitle='Percent Rejected',yr=[0,105],/ys,psym=1,symsize=0.3
-                  colorchoices=[color1,color2,color3,color4,color5]
-                  FOR i=1,4 DO oplot,x,(*p1).count_rejected[a:b,i]/total_count*100,color=colorchoices[i-1],psym=1,symsize=0.3
-                  legend_old,['Area Ratio','Interarrival','Size Range','Edge Touch','Cluster'],$
+                  colorchoices=[color1,color2,color3,color4,color5,color6]
+                  FOR i=1,6 DO oplot,x,(*p1).count_rejected[a:b,i]/total_count*100,color=colorchoices[i-1],psym=1,symsize=0.3
+                  legend_old,['Area Ratio','Interarrival','Size Range','Edge Touch','Cluster','Centerin'],$
                       line=0,color=colorchoices,charsize=1.0,box=0
                END
                'Particle Counts':BEGIN
@@ -234,6 +235,23 @@ PRO soda2_windowplot,topid,p1,pinfo,pop,pmisc,noset=noset
 ;                    k2=0.015  ;Thickness for wiping the background where text will be
 ;                    polyfill,[barposx[0]-k,barposx[1]+k,barposx[1]+k,barposx[0]-k],[barposy[0]-k,barposy[0]-k,barposy[1]+k,barposy[1]+k],/norm
 ;                    polyfill,[barposx[0]-k2,barposx[1]+k2,barposx[1]+k2,barposx[0]-k2],[barposy[1]+k,barposy[1]+k,barposy[1]+k2*2,barposy[1]+k2*2],/norm,color=255
+                   bar=findgen(nlevels+1)/nlevels*(zrange[1]-zrange[0])+zrange[0]
+                   xsave=!x
+                   contour,[[bar],[bar]],findgen(nlevels+1),[0,1],/cell,nlevels=nlevels,$
+                      position=[barposx[0],barposy[0],barposx[1],barposy[1]],$
+                      xtickname=['4','12'] ,xstyle=5,ystyle=5,zr=zrange,/noerase,noclip=0,c_colors=c_colors
+                   !x=xsave
+                   xyouts, barposx, barposy[1]+0.01, string(zrange, form='(f3.1)'),/norm,align=0.5
+                   xyouts, mean(barposx), barposy[1]+0.01, bartitle ,/norm,align=0.5
+               END
+               'Color Aspect Ratio':BEGIN
+                   conc=(*p1).meanaspr[a:b,*]
+                   zrange=[0,0.9]
+                   bartitle='Aspect Ratio'
+                   contour,conc,x,(*p1).midbins,/cell,nlevels=nlevels,ytitle='Diameter (um)',/yl,/ys,yr=sizerange,zr=zrange,c_colors=c_colors
+                   
+                   barposx=[0.05,0.35]*(!x.window[1]-!x.window[0]) + !x.window[0]
+                   barposy=[0.85,0.9]*(!y.window[1]-!y.window[0]) + !y.window[0]
                    bar=findgen(nlevels+1)/nlevels*(zrange[1]-zrange[0])+zrange[0]
                    xsave=!x
                    contour,[[bar],[bar]],findgen(nlevels+1),[0,1],/cell,nlevels=nlevels,$

@@ -1,4 +1,4 @@
-FUNCTION soda2_samplearea, diam, res, armwidth, numdiodes, reconstruct, smethod, wavelength, forcespec=forcespec, centerin=centerin
+FUNCTION soda2_samplearea, diam, res, armwidth, numdiodes, reconstruct, smethod, wavelength, forcespec=forcespec, centerin=centerin, dof=dof, eff_wid=eff_wid
    ;FUNCTION to return the sample area for a variety of probes.
    ;The sample area unit should be meter^2 for all probes.
    ;Allin/reconstruct option, for computing sa when particle must be all-in.
@@ -29,7 +29,7 @@ FUNCTION soda2_samplearea, diam, res, armwidth, numdiodes, reconstruct, smethod,
    IF centerin eq 1 THEN eff_wid=res*numdiodes    ;Assume center-in for this sizing
    IF reconstruct eq 0 THEN eff_wid=res*(numdiodes-1)-diam   ;All-in, from eq 6 in HP78
    
-   sa=dof*eff_wid * 1e-12  ;compute sa and convert to m^2 
+   sa=(dof*eff_wid * 1e-12) > 0  ;compute sa and convert to m^2, don't allow negative SA 
    return,sa
 END
    

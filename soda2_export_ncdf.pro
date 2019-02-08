@@ -1,4 +1,4 @@
-PRO soda2_export_ncdf, data, outfile=outfile, pthfile=pthfile
+PRO soda2_export_ncdf, data, outfile=outfile, pthfile=pthfile, lite=lite
    ;PRO to export a netCDF file with the variables contained in a data structure.
    ;Similar to soda2_export_ncdf_raf, but follows a simpler format, 
    ;   without the 'SPS' dimension, PSD padding, reversed dimensions, etc.
@@ -6,7 +6,7 @@ PRO soda2_export_ncdf, data, outfile=outfile, pthfile=pthfile
    ;Copyright © 2016 University Corporation for Atmospheric Research (UCAR). All rights reserved.
 
 
-   
+   IF n_elements(lite) eq 0 THEN lite=0  ;Option to avoid writing 2D matrices
    !quiet=1  ;Suppress annoying messages from ncdf routines
    
    ;-----------Create new file instead-----------------
@@ -64,15 +64,15 @@ PRO soda2_export_ncdf, data, outfile=outfile, pthfile=pthfile
    
    attname=['long_name','units']
    attvalue=['Elapsed time','seconds since '+year+'-'+month+'-'+day+' '+starttime+' +0000']
-   timeid=ncdf_vardef(id,'elapsed_time',xdimid,/long) 
+   timeid=ncdf_vardef(id,'elapsed_time',xdimid,/double) 
    FOR k=0,n_elements(attname)-1 DO ncdf_attput,id,timeid,attname[k],attvalue[k]
    
    attvalue=['Base time','seconds since 01/01/1970']
-   baseid=ncdf_vardef(id,'base_time',/long)
+   baseid=ncdf_vardef(id,'base_time',/double)
    FOR k=0,n_elements(attname)-1 DO ncdf_attput,id,baseid,attname[k],attvalue[k]
    
    attvalue=['UTC time','seconds from midnight of start date']
-   utcid=ncdf_vardef(id,'utc_time',xdimid,/long)
+   utcid=ncdf_vardef(id,'utc_time',xdimid,/double)
    FOR k=0,n_elements(attname)-1 DO ncdf_attput,id,utcid,attname[k],attvalue[k]
    
             
@@ -153,7 +153,8 @@ PRO soda2_export_ncdf, data, outfile=outfile, pthfile=pthfile
          END
          ELSE:skiptag=1  
       ENDCASE
-        
+
+      IF (lite eq 1) and (n_elements(dims) gt 1) THEN skiptag=1
       IF not(skiptag) THEN BEGIN                                              
          varid=ncdf_varid(id,tagname)  ;Check if this variable already exists
          IF varid eq -1 THEN varid=ncdf_vardef(id,tagname,dims,/float)         
@@ -177,10 +178,12 @@ PRO soda2_export_ncdf, data, outfile=outfile, pthfile=pthfile
    bulk100=compute_bulk_simple(data.conc1d,data.op.endbins,binstart=i100)
    armidbins=(data.op.arendbins+data.op.arendbins[1:*])/2.0
    meanar=compute_meanar(data.spec2d,armidbins)
+   meanaspr=compute_meanar(data.spec2d_aspr,armidbins)
    area=compute_area(data)
    area100=compute_area(data, binstart=i100)
    bulk=create_struct(bulkall, 'nt100', bulk100.nt, 'mnd100', bulk100.mnd, 'mvd100', bulk100.mvd, $
-        'iwc100', bulk100.iwc, 'area', area, 'area100', area100, 'lwc100', bulk100.lwc)
+        'iwc100', bulk100.iwc, 'area', area, 'area100', area100, 'lwc100', bulk100.lwc, 'meanar', $
+        meanar, 'meanaspr', meanaspr)
    tags=tag_names(bulk)     
    FOR j=0,n_elements(tags)-1 DO BEGIN
       ;Write each variable
@@ -238,9 +241,17 @@ PRO soda2_export_ncdf, data, outfile=outfile, pthfile=pthfile
             dims=[xdimid, ydimid_size]
             tagname='MEAN_AREARATIO'
          END
+         'MEANASPR':BEGIN
+            attname=['long_name','units','Bin_endpoints','Bin_units']
+            attvalue={a0:'Mean Aspect Ratio Per Size Bin',a1:'unitless',$
+                        a2:data.op.endbins,a3:'micrometers'}
+            dims=[xdimid, ydimid_size]
+            tagname='MEAN_ASPECTRATIO'
+         END
       ELSE:skiptag=1  
       ENDCASE
         
+      IF (lite eq 1) and (n_elements(dims) gt 1) THEN skiptag=1
       IF not(skiptag) THEN BEGIN                                      
          varid=ncdf_varid(id,tagname)  ;Check if this variable already exists
          IF varid eq -1 THEN varid=ncdf_vardef(id,tagname,dims,/float) 
@@ -282,6 +293,7 @@ PRO soda2_export_ncdf, data, outfile=outfile, pthfile=pthfile
                'P_ALT':attvalue={a1:'Pressure Altitude',a2:'m'}
                'GALT':attvalue={a1:'GPS/Geopotential Altitude',a2:'m'}
                'GPS_ALT':attvalue={a1:'GPS/Geopotential Altitude',a2:'m'}
+               'W':attvalue={a1:'Vertical Wind',a2:'m/s'}
                'T': BEGIN 
                   attvalue={a1:'Temperature',a2:'C'}
                   tagname='TEMP'  ;Make consistent

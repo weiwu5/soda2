@@ -16,7 +16,7 @@ FUNCTION soda2_processbuffer, buffer, pop, pmisc
    
    ;Define the structure to return for bad buffers   
    nullbuffer= {size:0,probetime:0,reftime:0,ar:0, aspr:0, rejectbuffer:1,bitimage:0,$
-                allin:0,streak:0,zd:0,dhist:0,nslices:0,missed:0,overloadflag:0}
+                allin:0,streak:0,zd:0,dhist:0,nslices:0,missed:0,overloadflag:0,dof:0b,particle_count:0L}
       
    CASE 1 OF
       ;-----------------------------------------------------------------------------------------------      
@@ -55,6 +55,8 @@ FUNCTION soda2_processbuffer, buffer, pop, pmisc
         
           restore_slice=0   ;These probes do not skip the first slice
           missed=0       
+          particle_count=intarr(num_images)  ;No counter
+          dof=bytarr(num_images)+1  ;Dofs are automatically rejected by requiring timeline AAAAAA.  There is a flipped bit in there if want to use them.
           
           ;Set up remainder for the next buffer
           nremainder=bufflength-max(sync_ind)
@@ -96,6 +98,8 @@ FUNCTION soda2_processbuffer, buffer, pop, pmisc
           stopline=time_ind < 1023
           restore_slice=1
           missed=0
+          particle_count=intarr(num_images)  ;No counter
+          dof=bytarr(num_images)+1  ;No dof flag, assume all are good
        END
        
        (((*pop).probetype eq 'CIP') or ((*pop).probetype eq 'PIP')): BEGIN   
@@ -116,20 +120,35 @@ FUNCTION soda2_processbuffer, buffer, pop, pmisc
           bitimage[0:63,x.sync_ind]=0   ;eliminate sync lines
           bitimage[0:63,x.sync_ind+1]=0 ;eliminate time lines         
           restore_slice=0
-          missed=0  ;Might want to implement same algorithm as in CIPG here....
+          
+          previouscount=[(*pmisc).lastparticlecount, x.particle_count]
+          diffcount=x.particle_count-previouscount
+          missed=diffcount[0:num_images-1]-1
+          ;The num_images-1 is tricky here since -1 also taken above. The last timeline is a partial image, so really taking num_timelines-2.
+          (*pmisc).lastparticlecount=x.particle_count[num_images-1] 
+          particle_count=x.particle_count[0:num_images-1]
+          dof=x.dof[0:num_images-1]
+
+          ;Assign the first particle in each buffer as an overload for SEA files.  
+          ;This is to account for deadtime between buffers in SEA data throttling.
+          ;Commented out for now, comparisons with SODA-1 were only so-so.
+          ;overload=bytarr(num_images)
+          ;IF ((*pop).format eq 'SEA') THEN overload[0]=1 
        END
       
        ((*pop).probetype eq 'CIPG'): BEGIN   
           x=decompress_dmt_grey(buffer.image)
-          num_images=n_elements(x.particle_count)-1   ; the number of particles in the buffer
-          IF num_images lt 3 THEN return, nullbuffer  ; This is a bad buffer
+          IF n_elements(x.time_sfm) lt 4 THEN return, nullbuffer  ; This is a bad buffer
           
           bitimage=(3-x.bitimage)    ;make background 0, 1,2,3 grey levels
           bitimage[*,x.sync_ind]=0   ;eliminate sync lines
           startline=x.sync_ind+1     ;This will skip particle fragments starting a buffer
           stopline=x.sync_ind[1:*]-1
-          time_sfm=x.time_sfm
-          particle_count=x.particle_count
+          ;time_sfm=x.time_sfm
+          ;particle_count=x.particle_count
+
+          ;Remove pixel noise
+          IF ((*pop).juelichfilter eq 1) THEN pixel_noise_filter, bitimage
                     
           ;Trying a new way to filter bad particles.  There are lots of them.
           ;Also account for missed/skipped images too, also LOTS of them.
@@ -138,39 +157,24 @@ FUNCTION soda2_processbuffer, buffer, pop, pmisc
           previoustime=[(*pmisc).lastclock, x.time_sfm]
           difftime=x.time_sfm-previoustime
           deadtime=difftime-difftime/diffcount
+          greymax=intarr(n_elements(x.time_sfm))
+          ;Eliminate particles that don't have at least 1 level-2 pixel.  Iterating to n-2 will automatically eliminate final incomplete image.
+          FOR i=0, n_elements(x.time_sfm)-2 DO greymax[i]=max(bitimage[*,startline[i]:stopline[i]])
           
-          good=where((diffcount gt 0) and (diffcount lt 50) and (difftime gt 0),ngood)
-          num_images=ngood-1
-          IF num_images lt 3 THEN return, nullbuffer  ; This is a bad buffer after num_images updated
+          good=where((diffcount gt 0) and (diffcount lt 50) and (difftime gt 0) and $
+                     (x.slice_count ne 0) and (x.slice_count lt 150) and (greymax ge 2),num_images)
+          IF num_images lt 4 THEN return, nullbuffer  ; This is a bad buffer after num_images updated
           startline=startline[good]
           stopline=stopline[good]
-          time_sfm=time_sfm[good]
-          particle_count=particle_count[good]
+          time_sfm=x.time_sfm[good]
+          particle_count=x.particle_count[good]
+          dof=bytarr(num_images)+1  ;No dof flag, assume all are good
           deadtime=deadtime[good]
           missed=diffcount[good]-1
-          
-          (*pmisc).lastparticlecount=particle_count[num_images]
-          (*pmisc).lastclock=time_sfm[num_images]
-    
-          ;truetime=buffer.time + (time_sfm[0:num_images-1] - time_sfm[num_images-1]) + (*pop).timeoffset
-          reftime=time_sfm[num_images]  ;This is the time that -should- match the buffer time          
-             
-          ;Eliminate particles that don't have at least 1 level-2 pixel
-          keep=intarr(num_images)
-          FOR i=0,num_images-1 DO BEGIN
-             greymax=max(bitimage[*,startline[i]:stopline[i]]) 
-             IF greymax ge 2 THEN keep[i]=1  
-          ENDFOR
-          good=where(keep eq 1,num_images)
-          IF num_images eq 0 THEN return, nullbuffer
-          startline=startline[good]
-          stopline=stopline[good]
-          time_sfm=time_sfm[good]
-          deadtime=deadtime[good]
-          missed=missed[good]
-             
-          
-          ;print,buffer.time, min(truetime), max(truetime), num_images, max(x.particle_count)-min(x.particle_count)                                         
+          (*pmisc).lastparticlecount=particle_count[num_images-1]
+          (*pmisc).lastclock=time_sfm[num_images-1]
+                 
+          reftime=time_sfm[num_images-1]  ;This is the time that -should- match the buffer time          
           restore_slice=0      
        END
 
@@ -183,6 +187,7 @@ FUNCTION soda2_processbuffer, buffer, pop, pmisc
           stopline=intarr(num_images)
           inttime=dblarr(num_images)
           overload=bytarr(num_images)
+          particle_count=intarr(num_images)
           slicecount=1  ;dummy first slice
           freq=double((*pop).res/(1.0e6*buffer.tas))  ; the time interval of each tick in a timeline
           c=0   ;keep an actual count since there are some bad particles in there that will be skipped
@@ -196,6 +201,7 @@ FUNCTION soda2_processbuffer, buffer, pop, pmisc
                slicecount=slicecount+(size(x.image,/dim))[1]
                stopline[c]=slicecount-1
                overload[c]=x.overload
+               particle_count[c]=x.particlecount
                IF ((*pop).probetype eq 'HVPS3') THEN x.time=x.timetrunc  ;HVPS has some timing errors, use truncated version.
                ;Check for clock rollovers over at 65536 (every 0.1 seconds at 100 m/s)
                IF x.time lt lastclock THEN inttime[c]=((x.time+65536)-lastclock)*freq ELSE $ 
@@ -207,6 +213,7 @@ FUNCTION soda2_processbuffer, buffer, pop, pmisc
           (*pmisc).lastclock=lastclock       ;Save for next buffer    
           num_images=c   ;update for sizing below
           overload=overload[0:c-1]  ;update size
+          particle_count=particle_count[0:c-1]
           
           IF num_images eq 0 THEN return, nullbuffer
           
@@ -217,22 +224,27 @@ FUNCTION soda2_processbuffer, buffer, pop, pmisc
           time_sfm=dblarr(c)
           
           ;Count backward from buffer time to get time_sfm
-          ;elaptime=0d
-          ;totalelapsed=total(inttime)
-          ;FOR i=0,c-1 DO BEGIN
-          ;   elaptime=elaptime+inttime[i]
-          ;   time_sfm[i]=reftime - (totalelapsed - elaptime)
-          ;ENDFOR
+          ;This seems to be the correct method.  Use line below to test, 
+          ;noting that elapsed particle time in the current buffer is closely
+          ;matched to the difference between current buffer time and last buffer time:
+          ;print, (*pmisc).lastbufftime, buffer.time, buffer.time-(*pmisc).lastbufftime, totalelapsed
+          elaptime=0d
+          totalelapsed=total(inttime)
+          FOR i=0,c-1 DO BEGIN
+             elaptime=elaptime+inttime[i]
+             time_sfm[i]=reftime - (totalelapsed - elaptime)
+          ENDFOR
           
-          ;Counting forward seems to work a little better, not perfect
-          ;To test, plot truetime in soda2_process2d
-          time_sfm[0]=reftime
-          FOR i=1,c-1 DO time_sfm[i]=time_sfm[i-1]+inttime[i] 
+          ;Counting forward, ignore this unless new info
+          ;time_sfm[0]=reftime
+          ;FOR i=1,c-1 DO time_sfm[i]=time_sfm[i-1]+inttime[i] 
           
           restore_slice=0
           missed=0
+          ;particle_count=intarr(num_images)  ;No counter
           (*pmisc).maxsfm=max(time_sfm)
-          (*pmisc).lastbufftime=buffer.time       
+          (*pmisc).lastbufftime=buffer.time   
+           dof=bytarr(num_images)+1  ;No dof flag, assume all are good
        END
       
        ELSE: PRINT, 'Probe type not available'
@@ -244,13 +256,21 @@ FUNCTION soda2_processbuffer, buffer, pop, pmisc
    IF max(diodetotal)/mean(diodetotal) gt 3 THEN streak=1 ELSE streak=0
 
    size=fltarr(num_images)
+   xsize=fltarr(num_images)
+   ysize=fltarr(num_images)
+   areasize=fltarr(num_images)
    allin=bytarr(num_images)
+   centerin=bytarr(num_images)
+   edge_touch=bytarr(num_images)
    area_ratio=fltarr(num_images)
    aspr=fltarr(num_images)
    orientation=fltarr(num_images)
+   area_orig=fltarr(num_images)
+   perimeterarea=fltarr(num_images)  ;Number of pixels on the border, for water detection
    zd=fltarr(num_images)
    nsep=intarr(num_images)
    dhist=intarr((*pop).numdiodes)
+   
    ;Boolean flag for SPEC probes indicates empty particle with overload time, set to 0 if not already defined.
    IF n_elements(overload) gt 0 THEN overloadflag=overload ELSE overloadflag=bytarr(num_images) 
    nslices=0  ;Number of image slices (no timelines, sync, etc)
@@ -291,26 +311,30 @@ FUNCTION soda2_processbuffer, buffer, pop, pmisc
       xspan=max(w)-min(w)+1
       nsep[i]=xspan-nw
       
-      IF total(roi) eq 0 THEN roi[5,0]=1    ;fill in zero area images with a single bit
-
       ;Water processing
       zeed=0
+      area_orig[i]=total(roi)
       IF ((*pop).water eq 1) and (*pop).smethod ne 'areasize' THEN BEGIN
-         area_orig=total(roi)
-         roi=fillholes(roi)     ;fills in poisson spots for liquid water drops
-         ps_correction = poisson_spot_correct(area_orig, total(roi), zd=zeed) ; as in Korolev 2007 
+         roi=fillholes(roi)     ;fills in poisson spots for liquid water drops, change roi so soda2_findsize get right area ratio, +40% processing time
+         ps_correction = poisson_spot_correct(area_orig[i], total(roi), zd=zeed) ; as in Korolev 2007 
       ENDIF ELSE ps_correction=1.0
          
-      part=soda2_findsize(roi,pop,pmisc)
+      part=soda2_findsize(roi,(*pop).res,(*pmisc).yres)
       size[i]=part.diam/ps_correction
+      xsize[i]=part.xsize/ps_correction
+      ysize[i]=part.ysize/ps_correction
+      areasize[i]=part.areasize
       area_ratio[i]=part.ar
       aspr[i]=part.aspr
-      allin[i]=part.allin        
+      allin[i]=part.allin   
+      centerin[i]=part.centerin
+      edge_touch[i]=part.edge_touch 
       zd[i]=zeed
       orientation[i]=part.orientation
+      perimeterarea[i]=part.perimeterarea
    ENDFOR   ;image loop end
 
-   return,{size:size,probetime:time_sfm,reftime:reftime,ar:area_ratio,aspr:aspr,rejectbuffer:0,bitimage:bitimage,$
-           allin:allin,streak:streak,zd:zd,dhist:dhist,nslices:nslices,missed:missed,nsep:nsep,overloadflag:overloadflag,$
-           orientation:orientation}  
+   return,{size:size,xsize:xsize,ysize:ysize,areasize:areasize,probetime:time_sfm,reftime:reftime,ar:area_ratio,aspr:aspr,rejectbuffer:0,bitimage:bitimage,$
+           allin:allin,centerin:centerin,streak:streak,zd:zd,dhist:dhist,nslices:nslices,missed:missed,nsep:nsep,overloadflag:overloadflag,dof:dof,$
+           orientation:orientation, area_orig:area_orig, perimeterarea:perimeterarea, particle_count:particle_count, edge_touch:edge_touch}  
 END
